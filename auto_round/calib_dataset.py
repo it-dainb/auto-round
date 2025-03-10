@@ -453,6 +453,7 @@ def get_dataloader(
         seed=42,
         bs=8,
         nsamples=512,
+        process_batch=1000
 ):
     """Generate a DataLoader for calibration using specified parameters.
 
@@ -569,7 +570,7 @@ def get_dataloader(
             dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
         if do_concat:
             dataset = concat_dataset_element(dataset)
-        dataset = dataset.filter(filter_func)
+        dataset = dataset.filter(filter_func, batch_size=process_batch)
         if name in data_lens:
             dataset = select_dataset(dataset, range(data_lens[name]))
         datasets.append(dataset)

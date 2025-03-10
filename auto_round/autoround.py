@@ -162,6 +162,8 @@ class AutoRound(object):
             enable_norm_bias_tuning: bool = False,
             enable_torch_compile: bool = False,
             device_map: Union[str, dict] = None,
+            process_batch=1000,
+            task=None
             **kwargs,
     ):
         self.quantized = False
@@ -222,6 +224,9 @@ class AutoRound(object):
         self.optimizer = self.get_optimizer(None)
         self.batch_dim = None
         self.infer_bs_coeff = 1
+
+        self.process_batch = process_batch
+        self.task = task
 
         torch.set_printoptions(precision=3, sci_mode=True)
         self.check_configs()
@@ -614,6 +619,7 @@ class AutoRound(object):
                 self.seed,
                 bs,
                 self.nsamples,
+                self.process_batch
             )
         else:
             self.dataloader = self.dataset
@@ -1030,6 +1036,15 @@ class AutoRound(object):
                 total_loss += loss.item() / num_elm
 
                 self.scale_loss_and_backward(scaler, loss)
+
+            if self.task is not None:
+                self.task.get_logger().report_scalar(
+                    title='Layer Quantization Loss',
+                    series=layer_name,
+                    value=total_loss,
+                    iteration=i,
+                )
+                
             if i == 0:
                 init_loss = total_loss
 
@@ -1074,7 +1089,7 @@ class AutoRound(object):
                 hook_handles.append(hook)
         return hook_handles
 
-    def quant_block(self, block, input_ids, input_others, q_input=None, device=torch.device("cpu")):
+    def quant_block(self, block_name, block, input_ids, input_others, q_input=None, device=torch.device("cpu")):
         """Quantize the weights of a given block of the model.
 
         Args:
@@ -1212,6 +1227,14 @@ class AutoRound(object):
                 total_loss += loss.item() / num_elm
                 self.scale_loss_and_backward(scaler, loss)
 
+            if self.task is not None:
+                self.task.get_logger().report_scalar(
+                    title='Block Quantization Loss',
+                    series=block_name,
+                    value=total_loss,
+                    iteration=i,
+                )
+
             if i == 0:
                 init_loss = total_loss
 
@@ -1326,8 +1349,9 @@ class AutoRound(object):
                 pbar.set_description(f"Quantizing {n}")
                 m = get_module(model, n)
             else:
+                n = f"[{i + 1}-{min(i + nblocks, len(block_names))}]"
                 names = block_names[i: min(i + nblocks, len(block_names))]
-                pbar.set_description(f"Quantizing [{i + 1}-{min(i + nblocks, len(block_names))}]/{len(block_names)}")
+                pbar.set_description(f"Quantizing {n}/{len(block_names)}")
                 modules = [get_module(model, n) for n in names]
                 m = WrapperMultiblock(modules)
 
@@ -1335,6 +1359,7 @@ class AutoRound(object):
                 m = m.to(device)
 
             q_input, input_ids = quant_block(
+                n,
                 m,
                 input_ids,
                 input_others,
