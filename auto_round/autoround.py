@@ -163,7 +163,7 @@ class AutoRound(object):
             enable_torch_compile: bool = False,
             device_map: Union[str, dict] = None,
             process_batch=1000,
-            task=None
+            task=None,
             **kwargs,
     ):
         self.quantized = False
@@ -363,7 +363,7 @@ class AutoRound(object):
                     f" as nsamples must equal or greater"
                     f" than gradient_accumulate_steps * batch_szie")
 
-    def quantize(self):
+    def quantize(self, dump_scale=False):
         """Quantize the model and return the quantized model along with layer configurations.
         the entry of AutoRound.
 
@@ -422,7 +422,7 @@ class AutoRound(object):
 
         self.quant_layers(layer_names, all_inputs)
 
-        self.dump_qinfo_to_layer_config()
+        self.dump_qinfo_to_layer_config(dump_scale=dump_scale)
 
         end_time = time.time()
         cost_time = end_time - self.start_time
@@ -448,7 +448,7 @@ class AutoRound(object):
         ##self.model = self.model.to(self.model_orig_dtype)##keep it as amp dtype
         return self.model, self.layer_config
 
-    def dump_qinfo_to_layer_config(self):
+    def dump_qinfo_to_layer_config(self, dump_scale=False):
         """
         dump quantization scale and zp to layer configuration
         Args:
@@ -458,11 +458,14 @@ class AutoRound(object):
         """
         # load scale and zp if use low_cpu_memory
         self.model = self.model.to('cpu')
-
+        
         for n, m in self.model.named_modules():
             if n not in self.layer_config.keys():
                 continue
-            if not hasattr(m, "scale"):
+            if hasattr(m, "scale") and dump_scale:
+                self.layer_config[n]["scale"] = m.scale
+                self.layer_config[n]["zp"] = m.zp
+            else:
                 self.layer_config[n]["data_type"] = "float"
                 if self.amp_dtype == torch.bfloat16:
                     self.layer_config[n]["data_type"] = "bfloat"
